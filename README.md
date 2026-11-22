@@ -19,8 +19,30 @@ closing quote with `indexOf()`, and only falls back to a character scan
 for the rare broken bits: a stray CR, a quote that never closes, the
 characters after a closing quote, and line breaks inside quotes.
 
-On the practice set it reads all six cases about 3–4× faster than
-csv-reader 1.0.0 (CPU time), with identical answers on every case.
+## v2.1 — what changed from v2
+
+- **Fewer branches in the hot loop (A).** The unquoted-field scan now
+  takes a `c > 44` fast path first: letters, digits and most punctuation
+  — the characters a CSV is mostly made of — are cleared with a single
+  comparison instead of three failed delimiter checks each. Only
+  characters at or below 44 (space, some punctuation, the delimiters
+  themselves) fall through to the specific comma / LF / CR checks.
+- **Leaner position handling (B).** The scan loop no longer carries a
+  `done` flag in its condition; it runs on `pos < n` alone and exits by
+  `break` on a delimiter, with the field's end state (`ended`, default
+  end-of-text) set once. No repeated flag test per character.
+- **Quoted fields keep their fast path (C).** A quoted field with no
+  doubled quote and no line break inside it is still taken with one
+  `slice()`; only doubled quotes, embedded breaks, unterminated quotes
+  and junk after the closing quote go through the slow character walk.
+- **Less field-building overhead (D).** A plain field is produced by a
+  single `slice()` with no concatenation; the accumulate-and-join path
+  only runs when a stray CR (or quote junk) actually forces it.
+
+On the practice set v2.1 reads all six cases about 4.4× faster than
+csv-reader 1.0.0 (CPU time), and about 1.04–1.08× faster than v2, with
+identical answers on every case (practice 6/6, a second generated set
+6/6, and 20,000 random inputs with 0 mismatches against v2).
 
 ## How it runs
 

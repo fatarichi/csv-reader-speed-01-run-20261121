@@ -1,4 +1,4 @@
-// Fast drop-in for csv-reader 1.0.0 (v2: unquoted scan inlined in the record loop).
+// Fast drop-in for csv-reader 1.0.0 (v2.1: c>44 fast path + ended/break loop).
 export function run(input) {
   const text = String(input.text);
   const header = input.header === true;
@@ -30,20 +30,22 @@ export function run(input) {
     let start = pos;
     let value = init === '' ? null : init;
     let added = 0;
+    let ended = 2;
     while (pos < n) {
       const c = text.charCodeAt(pos);
+      if (c > 44) { pos += 1; continue; }
       if (c === 44) {
         fValue = value === null ? text.slice(start, pos) : value + text.slice(start, pos);
-        fEnded = 0; fAdded = added + (pos - start); pos += 1; return;
+        fAdded = added + (pos - start); ended = 0; pos += 1; break;
       }
       if (c === 10) {
         fValue = value === null ? text.slice(start, pos) : value + text.slice(start, pos);
-        fEnded = 1; fAdded = added + (pos - start); pos += 1; line += 1; return;
+        fAdded = added + (pos - start); ended = 1; pos += 1; line += 1; break;
       }
       if (c === 13) {
         if (pos + 1 < n && text.charCodeAt(pos + 1) === 10) {
           fValue = value === null ? text.slice(start, pos) : value + text.slice(start, pos);
-          fEnded = 1; fAdded = added + (pos - start); pos += 2; line += 1; return;
+          fAdded = added + (pos - start); ended = 1; pos += 2; line += 1; break;
         }
         error('stray_cr');
         const piece = text.slice(start, pos);
@@ -53,8 +55,11 @@ export function run(input) {
       }
       pos += 1;
     }
-    fValue = value === null ? text.slice(start, pos) : value + text.slice(start, pos);
-    fEnded = 2; fAdded = added + (pos - start);
+    if (ended === 2) {
+      fValue = value === null ? text.slice(start, pos) : value + text.slice(start, pos);
+      fAdded = added + (pos - start);
+    }
+    fEnded = ended;
   }
 
   function readQuoted() {
@@ -136,37 +141,41 @@ export function run(input) {
         readQuoted();
       } else {
         // Inline unquoted scan (init ''): the hot path, no call overhead.
+        // A: `c > 44` fast path (letters/digits/most punctuation: 1 comparison).
+        // B: `ended` (default 2) + break, so the loop condition is just `pos < n`.
         let start = pos;
         let value = null;
         let added = 0;
-        let done = false;
-        while (pos < n && !done) {
+        let ended = 2;
+        while (pos < n) {
           const c = text.charCodeAt(pos);
+          if (c > 44) { pos += 1; continue; }
           if (c === 44) {
             fValue = value === null ? text.slice(start, pos) : value + text.slice(start, pos);
-            fEnded = 0; fAdded = added + (pos - start); pos += 1; done = true;
-          } else if (c === 10) {
+            fAdded = added + (pos - start); ended = 0; pos += 1; break;
+          }
+          if (c === 10) {
             fValue = value === null ? text.slice(start, pos) : value + text.slice(start, pos);
-            fEnded = 1; fAdded = added + (pos - start); pos += 1; line += 1; done = true;
-          } else if (c === 13) {
+            fAdded = added + (pos - start); ended = 1; pos += 1; line += 1; break;
+          }
+          if (c === 13) {
             if (pos + 1 < n && text.charCodeAt(pos + 1) === 10) {
               fValue = value === null ? text.slice(start, pos) : value + text.slice(start, pos);
-              fEnded = 1; fAdded = added + (pos - start); pos += 2; line += 1; done = true;
-            } else {
-              error('stray_cr');
-              const piece = text.slice(start, pos);
-              value = value === null ? piece : value + piece;
-              added += piece.length;
-              pos += 1; start = pos;
+              fAdded = added + (pos - start); ended = 1; pos += 2; line += 1; break;
             }
-          } else {
-            pos += 1;
+            error('stray_cr');
+            const piece = text.slice(start, pos);
+            value = value === null ? piece : value + piece;
+            added += piece.length;
+            pos += 1; start = pos; continue;
           }
+          pos += 1;
         }
-        if (!done) {
+        if (ended === 2) {
           fValue = value === null ? text.slice(start, pos) : value + text.slice(start, pos);
-          fEnded = 2; fAdded = added + (pos - start);
+          fAdded = added + (pos - start);
         }
+        fEnded = ended;
       }
       fields.push(fValue);
     } while (fEnded === 0);
